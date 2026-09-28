@@ -4,6 +4,10 @@
 #include <QInputDialog>
 #include <QMessageBox>
 #include <iostream>
+#include <cstdio>
+#include <cstring>
+#include "OBEP.h"
+
 using namespace std;
 
 MainWindowClientBookEncoder::MainWindowClientBookEncoder(QWidget *parent)
@@ -11,11 +15,10 @@ MainWindowClientBookEncoder::MainWindowClientBookEncoder(QWidget *parent)
     , ui(new Ui::MainWindowClientBookEncoder)
 {
     ui->setupUi(this);
-    ::close(2);
+    sSocket = -1;
+    ::close(2); // Redirection standard du squelette
 
-    //this->setFixedSize(1068, 301);
-
-    // Configuration de la table des employes (Personnel Garage)
+    // Configuration de la table des livres encodés
     ui->tableWidgetEncodedBooks->setColumnCount(9);
     ui->tableWidgetEncodedBooks->setRowCount(0);
     QStringList labelsTableEmployes;
@@ -31,19 +34,16 @@ MainWindowClientBookEncoder::MainWindowClientBookEncoder(QWidget *parent)
 
     this->logoutOk();
 
-    // Exemples d'utilisation (à supprimer)
-    this->addTupleTableBooks(1,"Les Thanatonautes","Bernard Werber","Science-Fiction","978-2253139225",505,1999,9.7f,3);
-    this->addTupleTableBooks(6,"Dune","Frank Herbert","Science-Fiction","978-2266320481",929,2021,11.95f,13);
-    this->addTupleTableBooks(13,"Le silence des agneaux","Thomas Harris","Thriller","978-2266208949",377,2015,7.7f,17);
-
-    this->addComboBoxAuthors("Bernard Werber");
-    this->addComboBoxAuthors("Dan Brown");
-
-    this->addComboBoxSubjects("Roman");
-    this->addComboBoxSubjects("Science-fiction");
+    // Suppression des données de test fictives en dur au démarrage
+    this->clearTableBooks();
+    this->clearComboBoxAuthors();
+    this->clearComboBoxSubjects();
 }
 
 MainWindowClientBookEncoder::~MainWindowClientBookEncoder() {
+    if (sSocket != -1) {
+        ::close(sSocket);
+    }
     delete ui;
 }
 
@@ -128,7 +128,6 @@ void MainWindowClientBookEncoder::addTupleTableBooks(int id,
     ui->tableWidgetEncodedBooks->setItem(nb-1,8,item);
 }
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void MainWindowClientBookEncoder::clearTableBooks() {
     ui->tableWidgetEncodedBooks->setRowCount(0);
 }
@@ -204,6 +203,7 @@ void MainWindowClientBookEncoder::logoutOk() {
     ui->actionLogin->setEnabled(true);
     ui->actionLogout->setEnabled(false);
 }
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///// Fonctions permettant d'afficher des boites de dialogue (ne pas modifier) ///////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -211,48 +211,196 @@ void MainWindowClientBookEncoder::dialogMessage(const string& title,const string
    QMessageBox::information(this,QString::fromStdString(title),QString::fromStdString(message));
 }
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void MainWindowClientBookEncoder::dialogError(const string& title,const string& message) {
    QMessageBox::critical(this,QString::fromStdString(title),QString::fromStdString(message));
 }
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////
 string MainWindowClientBookEncoder::dialogInputText(const string& title,const string& question) {
     return QInputDialog::getText(this,QString::fromStdString(title),QString::fromStdString(question)).toStdString();
 }
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////
 int MainWindowClientBookEncoder::dialogInputInt(const string& title,const string& question) {
     return QInputDialog::getInt(this,QString::fromStdString(title),QString::fromStdString(question));
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///// Fonctions gestion des boutons et items de menu (TO DO) /////////////////////////////////////////////////
+///// Fonctions gestion des boutons et items de menu (IMPLÉMENTÉES) //////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void MainWindowClientBookEncoder::on_actionLogin_triggered() {
+    // 1. Connexion au serveur si non connecté
+    if (sSocket == -1) {
+        sSocket = ClientSocket((char*)"127.0.0.1", 50000);
+        if (sSocket == -1) {
+            this->dialogError("Erreur Réseau", "Impossible de se connecter au serveur !");
+            return;
+        }
+    }
+
+    // 2. Demande des identifiants
+    string login = this->dialogInputText("Entrée en session", "Login ?");
+    string password = this->dialogInputText("Entrée en session", "Password ?");
+
+    // 3. Préparation de la requête LOGIN
+    OBEP_MESSAGE req, resp;
+    memset(&req, 0, sizeof(OBEP_MESSAGE));
+    req.type = LOGIN;
+    sprintf(req.data, "%s;%s", login.c_str(), password.c_str());
+
+    // 4. Envoi / Réception
+    Send(sSocket, (char*)&req, sizeof(OBEP_MESSAGE));
+    Receive(sSocket, (char*)&resp);
+
+    if (resp.status == 0) {
+        this->loginOk();
+        this->dialogMessage("Succès", "Connexion réussie !");
+
+        // Charger Auteurs
+        memset(&req, 0, sizeof(OBEP_MESSAGE));
+        req.type = GET_AUTHORS;
+        Send(sSocket, (char*)&req, sizeof(OBEP_MESSAGE));
+        Receive(sSocket, (char*)&resp);
+
+        if (resp.status == 0) {
+            this->clearComboBoxAuthors();
+            char *token = strtok(resp.data, "#");
+            while (token != NULL) {
+                int id;
+                char nom[50], prenom[50];
+                sscanf(token, "%d;%[^;];%s", &id, nom, prenom);
+                string fullAuthor = string(prenom) + " " + string(nom);
+                this->addComboBoxAuthors(fullAuthor);
+                token = strtok(NULL, "#");
+            }
+        }
+
+        // Charger Sujets
+        memset(&req, 0, sizeof(OBEP_MESSAGE));
+        req.type = GET_SUBJECTS;
+        Send(sSocket, (char*)&req, sizeof(OBEP_MESSAGE));
+        Receive(sSocket, (char*)&resp);
+
+        if (resp.status == 0) {
+            this->clearComboBoxSubjects();
+            char *token = strtok(resp.data, "#");
+            while (token != NULL) {
+                int id;
+                char nom[50];
+                sscanf(token, "%d;%s", &id, nom);
+                this->addComboBoxSubjects(nom);
+                token = strtok(NULL, "#");
+            }
+        }
+    } else {
+        this->dialogError("Erreur d'authentification", "Login ou mot de passe incorrect.");
+    }
+}
+
+void MainWindowClientBookEncoder::on_actionLogout_triggered() {
+    if (sSocket != -1) {
+        OBEP_MESSAGE req, resp;
+        memset(&req, 0, sizeof(OBEP_MESSAGE));
+        req.type = LOGOUT;
+
+        Send(sSocket, (char*)&req, sizeof(OBEP_MESSAGE));
+        Receive(sSocket, (char*)&resp);
+
+        ::close(sSocket);
+        sSocket = -1;
+    }
+
+    this->clearComboBoxAuthors();
+    this->clearComboBoxSubjects();
+    this->clearTableBooks();
+    this->logoutOk();
+    this->dialogMessage("Déconnexion", "Session fermée.");
+}
+
 void MainWindowClientBookEncoder::on_pushButtonAddAuthor_clicked() {
-    string lastName = this->dialogInputText("Nouvel auteur","Nom ?");
-    string firstName = this->dialogInputText("Nouvel auteur","Prénom ?");
-    string birthDate = this->dialogInputText("Nouvel auteur","Date de naissance (yyyy-mm-dd) ?");
-    cout << "Nom : " << lastName << endl;
-    cout << "Prénom : " << firstName << endl;
-    cout << "Date de naissance : " << birthDate << endl;
+    string lastName = this->dialogInputText("Nouvel auteur", "Nom ?");
+    string firstName = this->dialogInputText("Nouvel auteur", "Prénom ?");
+    string birthDate = this->dialogInputText("Nouvel auteur", "Date de naissance (yyyy-mm-dd) ?");
+
+    if (lastName.empty() || firstName.empty()) {
+        this->dialogError("Erreur", "Le nom et le prénom sont obligatoires.");
+        return;
+    }
+
+    OBEP_MESSAGE req, resp;
+    memset(&req, 0, sizeof(OBEP_MESSAGE));
+    req.type = ADD_AUTHOR;
+    sprintf(req.data, "%s;%s;%s", lastName.c_str(), firstName.c_str(), birthDate.c_str());
+
+    Send(sSocket, (char*)&req, sizeof(OBEP_MESSAGE));
+    Receive(sSocket, (char*)&resp);
+
+    if (resp.status == 0) {
+        string fullAuthor = firstName + " " + lastName;
+        this->addComboBoxAuthors(fullAuthor);
+        this->dialogMessage("Succès", "Auteur ajouté avec succès !");
+    } else {
+        this->dialogError("Erreur", "Échec de l'ajout de l'auteur (ou auteur déjà existant).");
+    }
 }
 
 void MainWindowClientBookEncoder::on_pushButtonAddSubject_clicked() {
-    string name = this->dialogInputText("Nouveau sujet","Nom ?");
-    cout << "Nom : " << name << endl;
+    string name = this->dialogInputText("Nouveau sujet", "Nom ?");
+
+    if (name.empty()) {
+        this->dialogError("Erreur", "Le nom du sujet est obligatoire.");
+        return;
+    }
+
+    OBEP_MESSAGE req, resp;
+    memset(&req, 0, sizeof(OBEP_MESSAGE));
+    req.type = ADD_SUBJECT;
+    sprintf(req.data, "%s", name.c_str());
+
+    Send(sSocket, (char*)&req, sizeof(OBEP_MESSAGE));
+    Receive(sSocket, (char*)&resp);
+
+    if (resp.status == 0) {
+        this->addComboBoxSubjects(name);
+        this->dialogMessage("Succès", "Sujet ajouté avec succès !");
+    } else {
+        this->dialogError("Erreur", "Échec de l'ajout du sujet (ou sujet déjà existant).");
+    }
 }
 
 void MainWindowClientBookEncoder::on_pushButtonAddBook_clicked() {
-    cout << "title = " << this->getTitle() << endl;
-    cout << "Isbn = " << this->getIsbn() << endl;
-    cout << "PageCount = " << this->getPageCount() << endl;
-    cout << "Price = " << this->getPrice() << endl;
-    cout << "PublishYear = " << this->getPublishYear() << endl;
-    cout << "Stock = " << this->getStockQuantity() << endl;
+    string title = this->getTitle();
+    string isbn = this->getIsbn();
+    int pages = this->getPageCount();
+    float price = this->getPrice();
+    int year = this->getPublishYear();
+    int stock = this->getStockQuantity();
+    string author = this->getSelectionAuthor();
+    string subject = this->getSelectionSubject();
 
-    cout << "selection auteur = " << this->getSelectionAuthor() << endl;
-    cout << "selection sujet  = " << this->getSelectionSubject() << endl;
+    if (title.empty() || isbn.empty()) {
+        this->dialogError("Erreur", "Veuillez saisir au moins un titre et un ISBN.");
+        return;
+    }
+
+    OBEP_MESSAGE req, resp;
+    memset(&req, 0, sizeof(OBEP_MESSAGE));
+    req.type = ADD_BOOK;
+
+    sprintf(req.data, "%s;%s;%s;%s;%d;%d;%.2f;%d", 
+            author.c_str(), subject.c_str(), title.c_str(), isbn.c_str(), 
+            pages, stock, price, year);
+
+    Send(sSocket, (char*)&req, sizeof(OBEP_MESSAGE));
+    Receive(sSocket, (char*)&resp);
+
+    if (resp.status == 0) {
+        int idInscrit = resp.id;
+        this->addTupleTableBooks(idInscrit, title, author, subject, isbn, pages, year, price, stock);
+        this->on_pushButtonClear_clicked();
+        this->dialogMessage("Succès", "Livre ajouté et encodé dans la base de données !");
+    } else {
+        this->dialogError("Erreur", "Échec de l'ajout du livre.");
+    }
 }
 
 void MainWindowClientBookEncoder::on_pushButtonClear_clicked() {
@@ -264,16 +412,9 @@ void MainWindowClientBookEncoder::on_pushButtonClear_clicked() {
     ui->spinBoxStockQuantity->setValue(0);
 }
 
-void MainWindowClientBookEncoder::on_actionLogin_triggered() {
-    string login = this->dialogInputText("Entrée en session","Login ?");
-    string password = this->dialogInputText("Entrée en session","Password ?");
-    this->loginOk();
-}
-
-void MainWindowClientBookEncoder::on_actionLogout_triggered() {
-    this->logoutOk();
-}
-
 void MainWindowClientBookEncoder::on_actionQuitter_triggered(){
+    if (sSocket != -1) {
+        ::close(sSocket);
+    }
     QApplication::exit(0);
 }

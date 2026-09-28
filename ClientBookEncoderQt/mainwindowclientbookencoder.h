@@ -3,6 +3,8 @@
 
 #include <QMainWindow>
 #include <string>
+#include "TCP.h"
+#include "OBEP.h"
 using namespace std;
 
 QT_BEGIN_NAMESPACE
@@ -53,5 +55,6 @@ private slots:
 
 private:
     Ui::MainWindowClientBookEncoder *ui;
+    int sSocket;
 };
 #endif // MAINWINDOWCLIENTBOOKENCODER_H
