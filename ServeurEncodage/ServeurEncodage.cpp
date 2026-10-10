@@ -14,7 +14,6 @@ void* FctThreadClient(void* p);
 
 int sEcoute;
 
-#define NB_THREADS_POOL 5
 #define TAILLE_FILE_ATTENTE 20
 
 int socketsAcceptees[TAILLE_FILE_ATTENTE];
@@ -25,39 +24,39 @@ pthread_mutex_t mutexSocketsAcceptees = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t condSocketsAcceptees = PTHREAD_COND_INITIALIZER;
 
 int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        printf("Erreur...\nUSAGE : Serveur portServeur\n");
-        exit(1);
-    }
-
-    for (int i = 0; i < TAILLE_FILE_ATTENTE; i++) {
+    int port = 50000;
+    int nbThreads = 5;    FILE* f = fopen("serveur.conf", "r");
+    if (f != NULL) {
+        char ligne[100];
+        while (fgets(ligne, sizeof(ligne), f)) {
+            sscanf(ligne, "PORT_ENCODING=%d", &port);
+            sscanf(ligne, "NB_THREADS_POOL=%d", &nbThreads);
+        }
+        fclose(f);
+        printf("Configuration chargée : Port = %d, Threads Pool = %d\n", port, nbThreads);
+    } else {
+        printf("Fichier serveur.conf introuvable, utilisation des valeurs par défaut.\n");
+    }    for (int i = 0; i < TAILLE_FILE_ATTENTE; i++) {
         socketsAcceptees[i] = -1;
-    }
-
-    struct sigaction A;
+    }    struct sigaction A;
     A.sa_flags = 0;
     sigemptyset(&A.sa_mask);
     A.sa_handler = HandlerSIGINT;
     if (sigaction(SIGINT, &A, NULL) == -1) {
         perror("Erreur de sigaction");
         exit(1);
-    }
-
-
-    pthread_t th;
-    for (int i = 0; i < NB_THREADS_POOL; i++) {
-        pthread_create(&th, NULL, FctThreadClient, NULL);
-    }
-
-    // Socket d'écoute
-    if ((sEcoute = ServerSocket(atoi(argv[1]))) == -1) {
+    }    pthread_t* thPool = (pthread_t*)malloc(sizeof(pthread_t) * nbThreads);
+    for (int i = 0; i < nbThreads; i++) {
+        pthread_create(&thPool[i], NULL, FctThreadClient, NULL);
+    }    if ((sEcoute = ServerSocket(port)) == -1) {
         perror("Erreur de ServerSocket");
+        free(thPool);
         exit(1);
     }
 
     int sService;
     char ipClient[50];
-    printf("Démarrage du serveur d'encodage sur le port %s...\n", argv[1]);
+    printf("Démarrage du serveur d'encodage sur le port %d...\n", port);
 
     while (1) {
         printf("Attente d'une connexion...\n");
@@ -65,6 +64,7 @@ int main(int argc, char* argv[]) {
             perror("Erreur de Accept");
             close(sEcoute);
             OBEP_Close();
+            free(thPool);
             exit(1);
         }
         printf("Connexion acceptée : IP=%s socket=%d\n", ipClient, sService);
@@ -77,6 +77,7 @@ int main(int argc, char* argv[]) {
         pthread_cond_signal(&condSocketsAcceptees);
     }
 
+    free(thPool);
     return 0;
 }
 
@@ -114,30 +115,22 @@ void TraitementConnexion(int sService, MYSQL* connexion) {
     bool onContinue = true;
 
     while (onContinue) {
-        printf("\t[THREAD %p] Attente requête...\n", (void*)pthread_self());
+        printf("\t[THREAD %p] Attente requête...\n", (void*)pthread_self());        nbLus = Receive(sService, (char*)&requete, sizeof(OBEP_MESSAGE));
 
-        if ((nbLus = Receive(sService, (char*)&requete)) < 0) {
-            perror("Erreur de Receive");
+        if (nbLus <= 0) {
+            printf("\t[THREAD %p] Client déconnecté ou erreur de lecture (socket %d).\n", (void*)pthread_self(), sService);
             close(sService);
             return;
         }
 
-        if (nbLus == 0) {
-            printf("\t[THREAD %p] Client déconnecté (socket %d).\n", (void*)pthread_self(), sService);
-            close(sService);
-            return;
-        }
-
-        onContinue = OBEP(&requete, &reponse, connexion);
-
-        if ((nbEcrits = Send(sService, (char*)&reponse, sizeof(OBEP_MESSAGE))) < 0) {
+        onContinue = OBEP(&requete, &reponse, connexion);        if ((nbEcrits = Send(sService, (char*)&reponse, sizeof(OBEP_MESSAGE))) < 0) {
             perror("Erreur de Send");
             close(sService);
             return;
         }
 
         if (!onContinue) {
-            printf("\t[THREAD %p] Fin de connexion sur la socket %d\n", (void*)pthread_self(), sService);
+            printf("\t[THREAD %p] Fin de session OBEP (LOGOUT) sur la socket %d\n", (void*)pthread_self(), sService);
             close(sService);
         }
     }

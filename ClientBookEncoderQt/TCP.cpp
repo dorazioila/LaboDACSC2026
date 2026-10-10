@@ -60,42 +60,24 @@ int ClientSocket(char* ipServeur,int portServeur){
     return sSocket;
 }
 
-int Send(int sSocket, char* data, int taille){
+int Send(int sSocket, char* data, int taille) {
     int totalEcrit = 0;
     int nbEcrits;
-    while (totalEcrit < taille){
+    while (totalEcrit < taille) {
         nbEcrits = write(sSocket, data + totalEcrit, taille - totalEcrit);
         if (nbEcrits <= 0) return -1;
         totalEcrit += nbEcrits;
     }
-
-    char fin = '\n';
-    if (write(sSocket, &fin, 1) <= 0) return -1;
-
-    return totalEcrit + 1;
+    return totalEcrit;
 }
-   
 
-int Receive(int sSocket, char* data){
-    char c;
+int Receive(int sSocket, char* data, int taille) {
+    int totalLu = 0;
     int nbLus;
-    int i = 0;
-    char finDeTrame = '\n'; 
-    while (i < TAILLE_MAX_DATA - 1){
-        nbLus = read(sSocket, &c, 1);
-
-        if (nbLus < 0){
-            return -1; 
-        }
-        if (nbLus == 0){
-            break; 
-        }
-        if (c == finDeTrame){
-            break;
-        } 
-        data[i] = c;
-        i++;
+    while (totalLu < taille) {
+        nbLus = read(sSocket, data + totalLu, taille - totalLu);
+        if (nbLus <= 0) return -1;
+        totalLu += nbLus;
     }
-    data[i] = '\0';
-    return i; 
+    return totalLu;
 }

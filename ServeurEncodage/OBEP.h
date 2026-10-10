@@ -9,7 +9,7 @@
 #define ADD_AUTHOR   5
 #define ADD_SUBJECT  6
 #define ADD_BOOK     7
-
+#define GET_BOOKS    8
 typedef struct {
     int type;        
     int status;      

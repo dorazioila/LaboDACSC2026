@@ -79,8 +79,8 @@ bool OBEP(OBEP_MESSAGE* requete, OBEP_MESSAGE* reponse, MYSQL* connexion) {
         }
 
         case ADD_AUTHOR: {
-            char lastName[50], firstName[50];
-            sscanf(requete->data, "%[^;];%s", lastName, firstName);
+            char lastName[50], firstName[50], birthDate[20];
+            sscanf(requete->data, "%[^;];%[^;];%s", lastName, firstName, birthDate);
 
             char sqlCheck[256];
             sprintf(sqlCheck, "SELECT id FROM authors WHERE last_name='%s' AND first_name='%s';", lastName, firstName);
