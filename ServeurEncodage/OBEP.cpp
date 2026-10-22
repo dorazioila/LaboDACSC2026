@@ -1,194 +1,209 @@
 #include "OBEP.h"
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+#include <stdlib.h>
 
-bool OBEP(OBEP_MESSAGE* requete, OBEP_MESSAGE* reponse, MYSQL* connexion) {
-    memset(reponse, 0, sizeof(OBEP_MESSAGE));
-    reponse->type = requete->type;
+bool TraiterRequeteOBEP(char* trameRequete, char* trameReponse, MYSQL* connexion) {
+    char commande[50];
 
-    switch (requete->type) {
+    // Extraction de la commande (premier jeton avant le #)
+    char* token = strtok(trameRequete, "#");
+    if (token == NULL) return false;
+    strcpy(commande, token);
 
-        case LOGIN: {
-            char login[50], password[50];
-            sscanf(requete->data, "%[^;];%s", login, password);
+    // --- CAS : LOGIN ---
+    if (strcmp(commande, "LOGIN") == 0) {
+        char* user = strtok(NULL, "#");
+        char* password = strtok(NULL, "#");
 
-            char sql[256];
-            sprintf(sql, "SELECT id FROM employees WHERE login='%s' AND password='%s';", login, password);
+        if (user != NULL && password != NULL) {
+            char requeteSQL[256];
+            sprintf(requeteSQL, "SELECT * FROM employees WHERE login='%s' AND password='%s'", user, password);
 
-            if (mysql_query(connexion, sql) == 0) {
-                MYSQL_RES* res = mysql_store_result(connexion);
-                if (res && mysql_num_rows(res) > 0) {
-                    reponse->status = 0;                } else {
-                    reponse->status = -1;
-                }
-                if (res) mysql_free_result(res);
-            } else {
-                reponse->status = -1;
-            }
-            return true;
-        }
-
-        case LOGOUT: {
-            reponse->status = 0;
-            return false; 
-        }
-
-        case GET_AUTHORS: {
-            char sql[] = "SELECT id, last_name, first_name FROM authors;";
-            if (mysql_query(connexion, sql) == 0) {
-                MYSQL_RES* res = mysql_store_result(connexion);
-                if (res) {
-                    MYSQL_ROW row;
-                    reponse->data[0] = '\0';
-                    while ((row = mysql_fetch_row(res)) != NULL) {
-                        char temp[128];
-                        sprintf(temp, "%s;%s;%s#", row[0], row[1], row[2]);
-                        strcat(reponse->data, temp);
+            if (mysql_query(connexion, requeteSQL) == 0) {
+                MYSQL_RES* result = mysql_store_result(connexion);
+                if (result) {
+                    if (mysql_num_rows(result) > 0) {
+                        sprintf(trameReponse, "LOGIN#OK\n");
+                        mysql_free_result(result);
+                        return true;
                     }
-                    mysql_free_result(res);
-                    reponse->status = 0;
-                }
-            } else {
-                reponse->status = -1;
-            }
-            return true;
-        }
-
-        case GET_SUBJECTS: {
-            char sql[] = "SELECT id, name FROM subjects;";
-            if (mysql_query(connexion, sql) == 0) {
-                MYSQL_RES* res = mysql_store_result(connexion);
-                if (res) {
-                    MYSQL_ROW row;
-                    reponse->data[0] = '\0';
-                    while ((row = mysql_fetch_row(res)) != NULL) {
-                        char temp[128];
-                        sprintf(temp, "%s;%s#", row[0], row[1]);
-                        strcat(reponse->data, temp);
-                    }
-                    mysql_free_result(res);
-                    reponse->status = 0;
-                }
-            } else {
-                reponse->status = -1;
-            }
-            return true;
-        }
-
-        case GET_BOOKS: {
-            char sql[] = "SELECT id, author_id, subject_id, title, isbn, page_count, stock_quantity, price, publish_year FROM books;";
-            if (mysql_query(connexion, sql) == 0) {
-                MYSQL_RES* res = mysql_store_result(connexion);
-                if (res) {
-                    MYSQL_ROW row;
-                    reponse->data[0] = '\0';
-                    while ((row = mysql_fetch_row(res)) != NULL) {
-                        char temp[512];                        sprintf(temp, "%s;%s;%s;%s;%s;%s;%s;%s;%s#", 
-                                row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]);
-                        strcat(reponse->data, temp);
-                    }
-                    mysql_free_result(res);
-                    reponse->status = 0;
-                }
-            } else {
-                reponse->status = -1;
-            }
-            return true;
-        }
-
-        case ADD_AUTHOR: {
-            char lastName[50], firstName[50], birthDate[20] = "";            sscanf(requete->data, "%[^;];%[^;];%s", lastName, firstName, birthDate);
-
-            char sqlCheck[256];
-            sprintf(sqlCheck, "SELECT id FROM authors WHERE last_name='%s' AND first_name='%s';", lastName, firstName);
-            mysql_query(connexion, sqlCheck);
-            MYSQL_RES* res = mysql_store_result(connexion);
-
-            if (res && mysql_num_rows(res) > 0) {
-                reponse->status = -1;                mysql_free_result(res);
-            } else {
-                if (res) mysql_free_result(res);
-                char sqlInsert[256];
-                if (strlen(birthDate) > 0) {
-                    sprintf(sqlInsert, "INSERT INTO authors (last_name, first_name, birth_date) VALUES ('%s', '%s', '%s');", lastName, firstName, birthDate);
-                } else {
-                    sprintf(sqlInsert, "INSERT INTO authors (last_name, first_name) VALUES ('%s', '%s');", lastName, firstName);
-                }
-                
-                if (mysql_query(connexion, sqlInsert) == 0) {
-                    reponse->status = 0;
-                    reponse->id = (int)mysql_insert_id(connexion);
-                } else {
-                    reponse->status = -1;
+                    mysql_free_result(result);
                 }
             }
-            return true;
         }
-
-        case ADD_SUBJECT: {
-            char name[50];
-            strcpy(name, requete->data);
-
-            char sqlCheck[256];
-            sprintf(sqlCheck, "SELECT id FROM subjects WHERE name='%s';", name);
-            mysql_query(connexion, sqlCheck);
-            MYSQL_RES* res = mysql_store_result(connexion);
-
-            if (res && mysql_num_rows(res) > 0) {
-                reponse->status = -1;
-                mysql_free_result(res);
-            } else {
-                if (res) mysql_free_result(res);
-                char sqlInsert[256];
-                sprintf(sqlInsert, "INSERT INTO subjects (name) VALUES ('%s');", name);
-                if (mysql_query(connexion, sqlInsert) == 0) {
-                    reponse->status = 0;
-                    reponse->id = (int)mysql_insert_id(connexion);
-                } else {
-                    reponse->status = -1;
-                }
-            }
-            return true;
-        }
-
-        case ADD_BOOK: {
-            int authorId = 0, subjectId = 0, pageCount = 0, stockQuantity = 0, publishYear = 0;
-            float price = 0.0f;
-            char title[100] = {0}, isbn[20] = {0};
-            for (int i = 0; requete->data[i] != '\0'; i++) {
-                if (requete->data[i] == ',') requete->data[i] = '.';
-            }
-
-            int ret = sscanf(requete->data, "%d;%d;%99[^;];%19[^;];%d;%d;%f;%d", 
-                             &authorId, &subjectId, title, isbn, &pageCount, &stockQuantity, &price, &publishYear);
-
-            printf("[DEBUG ADD_BOOK] Reçu: %s (sscanf lu %d valeurs)\n", requete->data, ret);
-
-            char sqlInsert[512];
-            sprintf(sqlInsert, "INSERT INTO books (author_id, subject_id, title, isbn, page_count, stock_quantity, price, publish_year) "
-                               "VALUES (%d, %d, '%s', '%s', %d, %d, %.2f, %d);",
-                    authorId, subjectId, title, isbn, pageCount, stockQuantity, price, publishYear);
-
-            printf("[DEBUG SQL] %s\n", sqlInsert);
-
-            if (mysql_query(connexion, sqlInsert) == 0) {
-                reponse->status = 0;
-                reponse->id = (int)mysql_insert_id(connexion);
-                printf("[DEBUG ADD_BOOK] Succès ! Nouveau livre ID: %d\n", reponse->id);
-            } else {
-                printf("[DEBUG MySQL ERREUR] %s\n", mysql_error(connexion));
-                reponse->status = -1;
-            }
-            return true;
-        }
-
-        default:
-            reponse->status = -1;
-            return true;
+        sprintf(trameReponse, "LOGIN#KO\n");
+        return true;
     }
-}
 
-void OBEP_Close() {
-   
+    // --- CAS : GET_AUTHORS ---
+    if (strcmp(commande, "GET_AUTHORS") == 0) {
+        if (mysql_query(connexion, "SELECT last_name, first_name FROM authors")) {
+            sprintf(trameReponse, "GET_AUTHORS#KO#0\n");
+            return true;
+        }
+
+        MYSQL_RES* result = mysql_store_result(connexion);
+        int nbAuteurs = mysql_num_rows(result);
+
+        char temp[256];
+        sprintf(trameReponse, "GET_AUTHORS#OK#%d", nbAuteurs);
+
+        MYSQL_ROW row;
+        while ((row = mysql_fetch_row(result))) {
+            sprintf(temp, "#%s#%s", row[0], row[1]);
+            strcat(trameReponse, temp);
+        }
+
+        strcat(trameReponse, "\n");
+        mysql_free_result(result);
+        return true;
+    }
+
+    // --- CAS : GET_SUBJECTS (AJOUTÉ) ---
+    if (strcmp(commande, "GET_SUBJECTS") == 0) {
+        // Remplacez 'name' par le nom exact de votre colonne si différente dans la table 'subjects'
+        if (mysql_query(connexion, "SELECT name FROM subjects")) {
+            sprintf(trameReponse, "GET_SUBJECTS#KO#0\n");
+            return true;
+        }
+
+        MYSQL_RES* result = mysql_store_result(connexion);
+        int nbSujets = result ? mysql_num_rows(result) : 0;
+
+        char temp[256];
+        sprintf(trameReponse, "GET_SUBJECTS#OK#%d", nbSujets);
+
+        MYSQL_ROW row;
+        while ((row = mysql_fetch_row(result))) {
+            sprintf(temp, "#%s", row[0]);
+            strcat(trameReponse, temp);
+        }
+
+        strcat(trameReponse, "\n");
+        mysql_free_result(result);
+        return true;
+    }
+
+    // --- CAS : ADD_AUTHOR ---
+    if (strcmp(commande, "ADD_AUTHOR") == 0) {
+        char* nom = strtok(NULL, "#");
+        char* prenom = strtok(NULL, "#");
+
+        if (nom != NULL && prenom != NULL) {
+            char requeteSQL[256];
+            sprintf(requeteSQL, "INSERT INTO authors (last_name, first_name) VALUES ('%s', '%s')", nom, prenom);
+
+            if (mysql_query(connexion, requeteSQL) == 0) {
+                sprintf(trameReponse, "ADD_AUTHOR#OK\n");
+                return true;
+            }
+        }
+        sprintf(trameReponse, "ADD_AUTHOR#KO\n");
+        return true;
+    }
+
+    // --- CAS : ADD_SUBJECT ---
+    if (strcmp(commande, "ADD_SUBJECT") == 0) {
+        char* name = strtok(NULL, "#");
+
+        if (name != NULL) {
+            char requeteSQL[256];
+            sprintf(requeteSQL, "INSERT INTO subjects (name) VALUES ('%s')", name);
+
+            if (mysql_query(connexion, requeteSQL) == 0) {
+                sprintf(trameReponse, "ADD_SUBJECT#OK\n");
+                return true;
+            }
+        }
+        sprintf(trameReponse, "ADD_SUBJECT#KO\n");
+        return true;
+    }
+
+    // --- CAS : ADD_BOOK ---
+    if (strcmp(commande, "ADD_BOOK") == 0) {
+        char* titre = strtok(NULL, "#");
+        char* authorStr = strtok(NULL, "#"); 
+        char* subjectStr = strtok(NULL, "#"); 
+        char* isbn = strtok(NULL, "#");
+        char* pageCount = strtok(NULL, "#");
+        char* publishYear = strtok(NULL, "#");
+        char* price = strtok(NULL, "#");
+        char* stockQuantity = strtok(NULL, "#");
+
+        if (titre && authorStr && subjectStr && isbn) {
+            // 1. Conversion de la virgule en point pour le prix
+            if (price != NULL) {
+                char* pVirgule = strchr(price, ',');
+                if (pVirgule) *pVirgule = '.';
+            }
+
+            int authorId = 0;
+            int subjectId = 0;
+            char requeteSQL[512];
+
+            // 2. Recherche de l'author_id
+            char authorCopy[256];
+            strcpy(authorCopy, authorStr);
+            char* nom = strtok(authorCopy, " ");
+            char* prenom = strtok(NULL, " ");
+
+            if (nom && prenom) {
+                sprintf(requeteSQL, "SELECT id FROM authors WHERE last_name='%s' AND first_name='%s'", nom, prenom);
+            } else {
+                sprintf(requeteSQL, "SELECT id FROM authors WHERE last_name='%s'", authorStr);
+            }
+
+            if (mysql_query(connexion, requeteSQL) == 0) {
+                MYSQL_RES* res = mysql_store_result(connexion);
+                if (res) {
+                    MYSQL_ROW row = mysql_fetch_row(res);
+                    if (row) authorId = atoi(row[0]);
+                    mysql_free_result(res);
+                }
+            }
+
+            // 3. Recherche du subject_id
+            sprintf(requeteSQL, "SELECT id FROM subjects WHERE name='%s'", subjectStr);
+            if (mysql_query(connexion, requeteSQL) == 0) {
+                MYSQL_RES* res = mysql_store_result(connexion);
+                if (res) {
+                    MYSQL_ROW row = mysql_fetch_row(res);
+                    if (row) subjectId = atoi(row[0]);
+                    mysql_free_result(res);
+                }
+            }
+
+            // 4. Insertion dans 'books' avec 'stock_quantity'
+            sprintf(requeteSQL, 
+                "INSERT INTO books (title, author_id, subject_id, isbn, page_count, publish_year, price, stock_quantity) "
+                "VALUES ('%s', %d, %d, '%s', %d, %d, %.2f, %d)",
+                titre, authorId, subjectId, isbn, 
+                pageCount ? atoi(pageCount) : 0, 
+                publishYear ? atoi(publishYear) : 0, 
+                price ? atof(price) : 0.0, 
+                stockQuantity ? atoi(stockQuantity) : 0);
+
+            printf("\t[DEBUG SQL] %s\n", requeteSQL);
+
+            if (mysql_query(connexion, requeteSQL) == 0) {
+                int newId = (int)mysql_insert_id(connexion);
+                sprintf(trameReponse, "ADD_BOOK#OK#%d\n", newId);
+                return true;
+            } else {
+                printf("\t[Erreur MySQL] %s\n", mysql_error(connexion));
+            }
+        }
+        sprintf(trameReponse, "ADD_BOOK#KO\n");
+        return true;
+    }
+
+    // --- CAS : LOGOUT ---
+    if (strcmp(commande, "LOGOUT") == 0) {
+        sprintf(trameReponse, "LOGOUT#OK\n");
+        return false; // Clôture la session côté serveur
+    }
+
+    sprintf(trameReponse, "ERROR#UNKNOWN_COMMAND\n");
+    return true;
 }

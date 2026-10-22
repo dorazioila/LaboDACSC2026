@@ -29,7 +29,6 @@ int Accept(int sEcoute, char *ipClient){
 	int sService;
 	struct sockaddr_in adrClient;
 	socklen_t tailleAdr =sizeof(struct sockaddr_in);
-
 	sService = accept(sEcoute, (struct sockaddr*)&adrClient, &tailleAdr);
     if (sService == -1){
         return -1;
@@ -65,19 +64,22 @@ int Send(int sSocket, char* data, int taille) {
     int nbEcrits;
     while (totalEcrit < taille) {
         nbEcrits = write(sSocket, data + totalEcrit, taille - totalEcrit);
-        if (nbEcrits <= 0) return -1;
+        if (nbEcrits <= 0)
+        	return -1;
         totalEcrit += nbEcrits;
     }
     return totalEcrit;
 }
    
-int Receive(int sSocket, char* data, int taille) {
-    int totalLus = 0;
-    int nbLus;
-    while (totalLus < taille) {
-        nbLus = read(sSocket, data + totalLus, taille - totalLus);
-        if (nbLus <= 0) return -1;
-        totalLus += nbLus;
+int ReceiveLine(int sSocket, char* buffer, int maxSize) {
+    int i = 0;
+    char c = 0;
+    while (i < maxSize - 1) {
+        int n = read(sSocket, &c, 1);
+        if (n <= 0) return -1; 
+        if (c == '\n') break;  
+        buffer[i++] = c;
     }
-    return totalLus;
+    buffer[i] = '\0';
+    return i;
 }

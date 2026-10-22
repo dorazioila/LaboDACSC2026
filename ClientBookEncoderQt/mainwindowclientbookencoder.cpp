@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include "OBEP.h"
+#include "TCP.h"
 
 using namespace std;
 
@@ -227,186 +228,203 @@ int MainWindowClientBookEncoder::dialogInputInt(const string& title,const string
 ///// Fonctions gestion des boutons et items de menu (IMPLÉMENTÉES) //////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void MainWindowClientBookEncoder::on_actionLogin_triggered(){
-    OBEP_MESSAGE req, resp;
+void MainWindowClientBookEncoder::on_actionLogin_triggered() {
+    string user = this->dialogInputText("Connexion", "Nom d'utilisateur :");
+    string password = this->dialogInputText("Connexion", "Mot de passe :");
 
-    // 1. Connexion au serveur si non connecté
+    if (user.empty() || password.empty()) {
+        this->dialogError("Erreur", "Identifiants invalides.");
+        return;
+    }
+
     if (sSocket == -1) {
         sSocket = ClientSocket((char*)"127.0.0.1", 50000);
         if (sSocket == -1) {
-            this->dialogError("Erreur Réseau", "Impossible de se connecter au serveur !");
+            this->dialogError("Erreur", "Impossible de se connecter au serveur.");
             return;
         }
     }
 
-    // 2. Demande des identifiants
-    string login = this->dialogInputText("Entrée en session", "Login ?");
-    string password = this->dialogInputText("Entrée en session", "Password ?");
+    char requete[2048];
+    char reponse[2048];
+    char* saveptr = NULL;
 
-    // 3. Préparation de la requête LOGIN
-    memset(&req, 0, sizeof(OBEP_MESSAGE));
-    req.type = LOGIN;
-    sprintf(req.data, "%s;%s", login.c_str(), password.c_str());
+    sprintf(requete, "LOGIN#%s#%s\n", user.c_str(), password.c_str());
 
-    // 4. Envoi / Réception
-    Send(sSocket, (char*)&req, sizeof(OBEP_MESSAGE));
-    Receive(sSocket, (char*)&resp, sizeof(OBEP_MESSAGE));
+    Send(sSocket, requete, strlen(requete));
+    if (ReceiveLine(sSocket, reponse, sizeof(reponse)) > 0) {
+        char* token = strtok_r(reponse, "#", &saveptr); 
+        char* status = strtok_r(NULL, "#", &saveptr);   
 
-    if (resp.status == 0) {
-        this->loginOk();
-        this->dialogMessage("Succès", "Connexion réussie !");
+        if (status != NULL && strcmp(status, "OK") == 0) {
+            this->loginOk();
+            this->dialogMessage("Succès", "Connexion réussie !");
 
-        // Charger Auteurs avec leur ID MySQL
-        memset(&req, 0, sizeof(OBEP_MESSAGE));
-        req.type = GET_AUTHORS;
-        Send(sSocket, (char*)&req, sizeof(OBEP_MESSAGE));
-        Receive(sSocket, (char*)&resp, sizeof(OBEP_MESSAGE));
-
-        if (resp.status == 0) {
+            // --- 1. CHARGEMENT DE LA COMBOBOX DES AUTEURS ---
             this->clearComboBoxAuthors();
-            char *token = strtok(resp.data, "#");
-            while (token != NULL) {
-                int id;
-                char nom[50], prenom[50];
-                sscanf(token, "%d;%[^;];%s", &id, nom, prenom);
-                string fullAuthor = string(prenom) + " " + string(nom);
-                
-                // On passe l'ID directement à la ComboBox sans modifier les fonctions d'assistance
-                ui->comboBoxAuthors->addItem(QString::fromStdString(fullAuthor), id);
-                
-                token = strtok(NULL, "#");
+            sprintf(requete, "GET_AUTHORS\n");
+            Send(sSocket, requete, strlen(requete));
+
+            memset(reponse, 0, sizeof(reponse));
+            if (ReceiveLine(sSocket, reponse, sizeof(reponse)) > 0) {
+                char* saveptrAuthors = NULL;
+                token = strtok_r(reponse, "#", &saveptrAuthors); // GET_AUTHORS
+                status = strtok_r(NULL, "#", &saveptrAuthors);  // OK
+
+                if (status != NULL && strcmp(status, "OK") == 0) {
+                    char* nbStr = strtok_r(NULL, "#", &saveptrAuthors);
+                    int nbAuteurs = nbStr ? atoi(nbStr) : 0;
+
+                    for (int i = 0; i < nbAuteurs; i++) {
+                        char* nom = strtok_r(NULL, "#", &saveptrAuthors);
+                        char* prenom = strtok_r(NULL, "#", &saveptrAuthors);
+                        if (nom && prenom) {
+                            string nomComplet = string(nom) + " " + string(prenom);
+                            this->addComboBoxAuthors(nomComplet);
+                        }
+                    }
+                }
             }
-        }
 
-        // Charger Sujets avec leur ID MySQL
-        memset(&req, 0, sizeof(OBEP_MESSAGE));
-        req.type = GET_SUBJECTS;
-        Send(sSocket, (char*)&req, sizeof(OBEP_MESSAGE));
-        Receive(sSocket, (char*)&resp, sizeof(OBEP_MESSAGE));
-
-        if (resp.status == 0) {
+            // --- 2. CHARGEMENT DE LA COMBOBOX DES SUJETS ---
             this->clearComboBoxSubjects();
-            char *token = strtok(resp.data, "#");
-            while (token != NULL) {
-                int id;
-                char nom[50];
-                sscanf(token, "%d;%s", &id, nom);
-                
-                // On passe l'ID directement à la ComboBox sans modifier les fonctions d'assistance
-                ui->comboBoxSubjects->addItem(QString::fromStdString(nom), id);
-                
-                token = strtok(NULL, "#");
+            sprintf(requete, "GET_SUBJECTS\n");
+            Send(sSocket, requete, strlen(requete));
+
+            memset(reponse, 0, sizeof(reponse));
+            if (ReceiveLine(sSocket, reponse, sizeof(reponse)) > 0) {
+                char* saveptrSubjects = NULL;
+                token = strtok_r(reponse, "#", &saveptrSubjects); // GET_SUBJECTS
+                status = strtok_r(NULL, "#", &saveptrSubjects);  // OK
+
+                if (status != NULL && strcmp(status, "OK") == 0) {
+                    char* nbStr = strtok_r(NULL, "#", &saveptrSubjects);
+                    int nbSujets = nbStr ? atoi(nbStr) : 0;
+
+                    for (int i = 0; i < nbSujets; i++) {
+                        char* nomSujet = strtok_r(NULL, "#", &saveptrSubjects);
+                        if (nomSujet) {
+                            this->addComboBoxSubjects(nomSujet);
+                        }
+                    }
+                }
             }
+
+        } else {
+            this->dialogError("Erreur", "Identifiants incorrects.");
         }
-    } else {
-        this->dialogError("Erreur d'authentification", "Login ou mot de passe incorrect.");
     }
 }
+
 void MainWindowClientBookEncoder::on_actionLogout_triggered() {
     if (sSocket != -1) {
-        OBEP_MESSAGE req, resp;
-        memset(&req, 0, sizeof(OBEP_MESSAGE));
-        req.type = LOGOUT;
+        char requete[] = "LOGOUT\n";
+        char reponse[512];
 
-        Send(sSocket, (char*)&req, sizeof(OBEP_MESSAGE));
-        Receive(sSocket, (char*)&resp, sizeof(OBEP_MESSAGE));
+        Send(sSocket, requete, strlen(requete));
+        ReceiveLine(sSocket, reponse, sizeof(reponse));
 
         ::close(sSocket);
         sSocket = -1;
     }
-
-    this->clearComboBoxAuthors();
-    this->clearComboBoxSubjects();
-    this->clearTableBooks();
     this->logoutOk();
-    this->dialogMessage("Déconnexion", "Session fermée.");
+    this->dialogMessage("Information", "Vous êtes déconnecté.");
 }
 
 void MainWindowClientBookEncoder::on_pushButtonAddAuthor_clicked() {
-    string lastName = this->dialogInputText("Nouvel auteur", "Nom ?");
-    string firstName = this->dialogInputText("Nouvel auteur", "Prénom ?");
-    string birthDate = this->dialogInputText("Nouvel auteur", "Date de naissance (yyyy-mm-dd) ?");
+    string nom = this->dialogInputText("Nouvel auteur", "Nom de l'auteur :");
+    string prenom = this->dialogInputText("Nouvel auteur", "Prénom de l'auteur :");
 
-    if (lastName.empty() || firstName.empty()) {
+    if (nom.empty() || prenom.empty()) {
         this->dialogError("Erreur", "Le nom et le prénom sont obligatoires.");
         return;
     }
 
-    OBEP_MESSAGE req, resp;
-    memset(&req, 0, sizeof(OBEP_MESSAGE));
-    req.type = ADD_AUTHOR;
-    sprintf(req.data, "%s;%s;%s", lastName.c_str(), firstName.c_str(), birthDate.c_str());
+    char requete[512];
+    char reponse[512];
+    
+    sprintf(requete, "ADD_AUTHOR#%s#%s\n", nom.c_str(), prenom.c_str());
 
-    Send(sSocket, (char*)&req, sizeof(OBEP_MESSAGE));
-    Receive(sSocket, (char*)&resp, sizeof(OBEP_MESSAGE));
+    Send(sSocket, requete, strlen(requete));
+    if (ReceiveLine(sSocket, reponse, sizeof(reponse)) > 0) {
+        char* token = strtok(reponse, "#");
+        char* status = strtok(NULL, "#");
 
-    if (resp.status == 0) {
-        string fullAuthor = firstName + " " + lastName;
-        ui->comboBoxAuthors->addItem(QString::fromStdString(fullAuthor), resp.id);
-        this->dialogMessage("Succès", "Auteur ajouté avec succès !");
-    } else {
-        this->dialogError("Erreur", "Échec de l'ajout de l'auteur (ou auteur déjà existant).");
+        if (status != NULL && strcmp(status, "OK") == 0) {
+            this->addComboBoxAuthors(nom + " " + prenom);
+            this->dialogMessage("Succès", "Auteur ajouté avec succès !");
+        } else {
+            this->dialogError("Erreur", "Échec de l'ajout de l'auteur.");
+        }
     }
 }
 
 void MainWindowClientBookEncoder::on_pushButtonAddSubject_clicked() {
-    string name = this->dialogInputText("Nouveau sujet", "Nom ?");
+    string name = this->dialogInputText("Nouveau sujet", "Nom du sujet ?");
 
     if (name.empty()) {
         this->dialogError("Erreur", "Le nom du sujet est obligatoire.");
         return;
     }
 
-    OBEP_MESSAGE req, resp;
-    memset(&req, 0, sizeof(OBEP_MESSAGE));
-    req.type = ADD_SUBJECT;
-    sprintf(req.data, "%s", name.c_str());
+    char requete[512];
+    char reponse[512];
 
-    Send(sSocket, (char*)&req, sizeof(OBEP_MESSAGE));
-    Receive(sSocket, (char*)&resp, sizeof(OBEP_MESSAGE));
+    // Format textuel : ADD_SUBJECT#nomSujet\n
+    sprintf(requete, "ADD_SUBJECT#%s\n", name.c_str());
 
-    if (resp.status == 0) {
-        ui->comboBoxSubjects->addItem(QString::fromStdString(name), resp.id);
-        this->dialogMessage("Succès", "Sujet ajouté avec succès !");
-    } else {
-        this->dialogError("Erreur", "Échec de l'ajout du sujet (ou sujet déjà existant).");
+    Send(sSocket, requete, strlen(requete));
+
+    if (ReceiveLine(sSocket, reponse, sizeof(reponse)) > 0) {
+        char* token = strtok(reponse, "#");
+        char* status = strtok(NULL, "#");
+
+        if (status != NULL && strcmp(status, "OK") == 0) {
+            this->addComboBoxSubjects(name);
+            this->dialogMessage("Succès", "Sujet ajouté avec succès !");
+        } else {
+            this->dialogError("Erreur", "Échec de l'ajout du sujet (ou sujet déjà existant).");
+        }
     }
 }
 
 void MainWindowClientBookEncoder::on_pushButtonAddBook_clicked() {
-    string title = this->getTitle();
-    string isbn = this->getIsbn();
-    int pages = this->getPageCount();
-    float price = this->getPrice();
-    int year = this->getPublishYear();
-    int stock = this->getStockQuantity();
+    string titre = this->getTitle();
     string author = this->getSelectionAuthor();
     string subject = this->getSelectionSubject();
-    int authorId = ui->comboBoxAuthors->currentData().toInt();
-    int subjectId = ui->comboBoxSubjects->currentData().toInt();
+    string isbn = this->getIsbn();
+    int pageCount = this->getPageCount();
+    int publishYear = this->getPublishYear();
+    float price = this->getPrice();
+    int stockQuantity = this->getStockQuantity();
 
-    if (title.empty() || isbn.empty()) {
-        this->dialogError("Erreur", "Veuillez saisir au moins un titre et un ISBN.");
+    if (titre.empty() || isbn.empty()) {
+        this->dialogError("Erreur", "Le titre et l'ISBN sont obligatoires.");
         return;
     }
 
-    OBEP_MESSAGE req, resp;
-    memset(&req, 0, sizeof(OBEP_MESSAGE));
-    req.type = ADD_BOOK;
+    char requete[1024];
+    char reponse[512];
 
-    sprintf(req.data, "%d;%d;%s;%s;%d;%d;%.2f;%d", authorId, subjectId, title.c_str(), 
-        isbn.c_str(), pages, stock, price,year);
+    // Format textuel : ADD_BOOK#titre#author#subject#isbn#pageCount#publishYear#price#stockQuantity\n
+    sprintf(requete, "ADD_BOOK#%s#%s#%s#%s#%d#%d#%.2f#%d\n", 
+            titre.c_str(), author.c_str(), subject.c_str(), 
+            isbn.c_str(), pageCount, publishYear, price, stockQuantity);
 
-    Send(sSocket, (char*)&req, sizeof(OBEP_MESSAGE));
-    Receive(sSocket, (char*)&resp, sizeof(OBEP_MESSAGE));
+    Send(sSocket, requete, strlen(requete));
+    if (ReceiveLine(sSocket, reponse, sizeof(reponse)) > 0) {
+        char* token = strtok(reponse, "#");
+        char* status = strtok(NULL, "#");
 
-    if (resp.status == 0) {
-        int idInscrit = resp.id;
-        this->addTupleTableBooks(idInscrit, title, author, subject, isbn, pages, year, price, stock);
-        this->on_pushButtonClear_clicked();
-        this->dialogMessage("Succès", "Livre ajouté et encodé dans la base de données !");
-    } else {
-        this->dialogError("Erreur", "Échec de l'ajout du livre.");
+        if (status != NULL && strcmp(status, "OK") == 0) {
+            char* idStr = strtok(NULL, "#");
+            int id = idStr ? atoi(idStr) : 0;
+
+            this->addTupleTableBooks(id, titre, author, subject, isbn, pageCount, publishYear, price, stockQuantity);
+            this->dialogMessage("Succès", "Livre ajouté avec succès !");
+        } else {
+            this->dialogError("Erreur", "Échec de l'ajout du livre.");
+        }
     }
 }
 
@@ -419,8 +437,10 @@ void MainWindowClientBookEncoder::on_pushButtonClear_clicked() {
     ui->spinBoxStockQuantity->setValue(0);
 }
 
-void MainWindowClientBookEncoder::on_actionQuitter_triggered(){
+void MainWindowClientBookEncoder::on_actionQuitter_triggered() {
     if (sSocket != -1) {
+        char requete[] = "LOGOUT\n";
+        Send(sSocket, requete, strlen(requete));
         ::close(sSocket);
     }
     QApplication::exit(0);

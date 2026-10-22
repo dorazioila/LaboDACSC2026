@@ -25,7 +25,8 @@ pthread_cond_t condSocketsAcceptees = PTHREAD_COND_INITIALIZER;
 
 int main(int argc, char* argv[]) {
     int port = 50000;
-    int nbThreads = 5;    FILE* f = fopen("serveur.conf", "r");
+    int nbThreads = 5;    
+    FILE* f = fopen("server.conf", "r");
     if (f != NULL) {
         char ligne[100];
         while (fgets(ligne, sizeof(ligne), f)) {
@@ -63,7 +64,6 @@ int main(int argc, char* argv[]) {
         if ((sService = Accept(sEcoute, ipClient)) == -1) {
             perror("Erreur de Accept");
             close(sEcoute);
-            OBEP_Close();
             free(thPool);
             exit(1);
         }
@@ -110,35 +110,47 @@ void* FctThreadClient(void* p) {
 }
 
 void TraitementConnexion(int sService, MYSQL* connexion) {
-    OBEP_MESSAGE requete, reponse;
-    int nbLus, nbEcrits;
+    char trameRequete[2048];
+    char trameReponse[2048];
+    int nbLus;
     bool onContinue = true;
 
     while (onContinue) {
-        printf("\t[THREAD %p] Attente requête...\n", (void*)pthread_self());        nbLus = Receive(sService, (char*)&requete, sizeof(OBEP_MESSAGE));
+        printf("\t[THREAD %p] Attente requête...\n", (void*)pthread_self());
+        
+        // Lecture jusqu'au '\n'
+        nbLus = ReceiveLine(sService, trameRequete, sizeof(trameRequete));
 
         if (nbLus <= 0) {
-            printf("\t[THREAD %p] Client déconnecté ou erreur de lecture (socket %d).\n", (void*)pthread_self(), sService);
+            printf("\t[THREAD %p] Déconnexion du client (socket %d).\n", (void*)pthread_self(), sService);
             close(sService);
             return;
         }
 
-        onContinue = OBEP(&requete, &reponse, connexion);        if ((nbEcrits = Send(sService, (char*)&reponse, sizeof(OBEP_MESSAGE))) < 0) {
+        printf("\t[THREAD %p] Trame reçue : %s\n", (void*)pthread_self(), trameRequete);
+
+        // Traitement et génération de la trame de réponse
+        onContinue = TraiterRequeteOBEP(trameRequete, trameReponse, connexion);
+        
+        // Envoi de la réponse textuelle
+        if (Send(sService, trameReponse, strlen(trameReponse)) < 0) {
             perror("Erreur de Send");
             close(sService);
             return;
         }
 
         if (!onContinue) {
-            printf("\t[THREAD %p] Fin de session OBEP (LOGOUT) sur la socket %d\n", (void*)pthread_self(), sService);
+            printf("\t[THREAD %p] Fin de session (LOGOUT) sur la socket %d\n", (void*)pthread_self(), sService);
             close(sService);
         }
     }
 }
 
+
+
+
 void HandlerSIGINT(int s) {
     printf("\nArrêt du serveur.\n");
     close(sEcoute);
-    OBEP_Close();
     exit(0);
 }
